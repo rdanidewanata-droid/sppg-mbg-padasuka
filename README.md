@@ -16,10 +16,10 @@ Sistem ini mengintegrasikan seluruh kanal distribusi (23 Sekolah/PAUD dan 18 Pos
 
 ## 🚀 Teknologi Utama
 - **Frontend**: React 19, TypeScript, Tailwind CSS v4, Lucide Icons
-- **Backend**: Express.js, TypeScript, TSX
-- **Database**: SQLite persisten (`sistem_mbg.db`) via `better-sqlite3` dengan integritas *Foreign Key Constraints*
-- **Keamanan & Autentikasi**: JSON Web Token (JWT) + Hashing Password menggunakan BCrypt
-- **Build Tool**: Vite 8 & Concurrently
+- **Backend**: Hono di Cloudflare Workers, TypeScript
+- **Database**: Cloudflare D1 (SQLite) dengan integritas *Foreign Key Constraints*; skema di `migrations/`
+- **Keamanan & Autentikasi**: JSON Web Token (JWT) + Hashing Password PBKDF2-SHA256 (Web Crypto)
+- **Build Tool**: Vite 8, Wrangler & Concurrently
 
 ---
 
@@ -91,3 +91,26 @@ Sistem ini mengintegrasikan seluruh kanal distribusi (23 Sekolah/PAUD dan 18 Pos
 ---
 *Dikembangkan untuk implementasi Skripsi Program Studi Sistem Informasi / Teknik Informatika.*
 >>>>>>> a608e95 (Initial commit)
+
+
+---
+
+## ☁️ Menjalankan di Cloudflare Workers + D1
+
+**Pengembangan lokal**
+```bash
+pnpm install
+cp .dev.vars.example .dev.vars   # isi JWT_SECRET
+pnpm db:migrate:local            # buat tabel + data seed di D1 lokal
+pnpm dev                         # Worker API (:5001) + Vite (:5173)
+```
+
+**Deploy**
+```bash
+pnpm wrangler d1 create sistem-mbg      # salin database_id ke wrangler.jsonc
+pnpm wrangler secret put JWT_SECRET
+pnpm db:migrate:remote
+pnpm deploy                             # build frontend + wrangler deploy
+```
+
+Data seed ada di `server/seed.ts`; setelah mengubahnya jalankan `pnpm db:seed:generate` untuk membuat ulang `migrations/0002_seed.sql`.

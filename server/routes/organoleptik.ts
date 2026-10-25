@@ -1,15 +1,16 @@
-import { Router } from 'express';
-import { db } from '../db.js';
-import { authenticateToken, requireRoles } from '../auth.js';
+import { Hono } from 'hono';
+import { authenticateToken, requireRoles } from '../auth';
+import type { AppEnv } from '../types';
 
-const router = Router();
+const router = new Hono<AppEnv>();
 
 // List Uji Organoleptik
-router.get('/', authenticateToken, (req, res) => {
-  const { search, tanggal_awal, tanggal_akhir, id_menu } = req.query;
+router.get('/', authenticateToken, async (c) => {
+  const db = c.get('db');
+  const { search, tanggal_awal, tanggal_akhir, id_menu } = c.req.query();
 
   let query = `
-    SELECT 
+    SELECT
       u.*,
       m.nama_menu,
       m.deskripsi as deskripsi_menu
@@ -42,34 +43,33 @@ router.get('/', authenticateToken, (req, res) => {
   query += ' ORDER BY u.tanggal DESC, u.id_uji DESC';
 
   try {
-    const list = db.prepare(query).all(...params);
-    res.json(list);
+    const list = await db.prepare(query).all(...params);
+    return c.json(list);
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal mengambil data uji organoleptik: ' + error.message });
+    return c.json({ message: 'Gagal mengambil data uji organoleptik: ' + error.message }, 500);
   }
 });
 
 // Create Uji Organoleptik (Administrator only)
-router.post('/', authenticateToken, requireRoles('Administrator'), (req, res) => {
-  const { id_menu, tanggal, warna, aroma, rasa, tekstur, keterangan } = req.body;
+router.post('/', authenticateToken, requireRoles('Administrator'), async (c) => {
+  const db = c.get('db');
+  const { id_menu, tanggal, warna, aroma, rasa, tekstur, keterangan } = await c.req.json().catch(() => ({}));
 
   if (!id_menu || !tanggal || !warna || !aroma || !rasa || !tekstur) {
-    return res.status(400).json({ message: 'Menu, tanggal, dan seluruh indikator organoleptik wajib diisi.' });
+    return c.json({ message: 'Menu, tanggal, dan seluruh indikator organoleptik wajib diisi.' }, 400);
   }
 
   try {
     // Validate menu existence
-    const menuExists = db.prepare('SELECT id_menu FROM menu_harian WHERE id_menu = ?').get(id_menu);
+    const menuExists = await db.prepare('SELECT id_menu FROM menu_harian WHERE id_menu = ?').get(id_menu);
     if (!menuExists) {
-      return res.status(400).json({ message: 'Menu harian yang dipilih tidak valid.' });
+      return c.json({ message: 'Menu harian yang dipilih tidak valid.' }, 400);
     }
 
-    const stmt = db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO uji_organoleptik (id_menu, tanggal, warna, aroma, rasa, tekstur, keterangan)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const result = stmt.run(
+    `).run(
       Number(id_menu),
       tanggal,
       Number(warna),
@@ -79,32 +79,31 @@ router.post('/', authenticateToken, requireRoles('Administrator'), (req, res) =>
       keterangan || ''
     );
 
-    const created = db.prepare(`
+    const created = await db.prepare(`
       SELECT u.*, m.nama_menu, m.deskripsi as deskripsi_menu
       FROM uji_organoleptik u
       JOIN menu_harian m ON u.id_menu = m.id_menu
       WHERE u.id_uji = ?
     `).get(result.lastInsertRowid);
 
-    res.status(201).json(created);
+    return c.json(created, 201);
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal menambahkan uji organoleptik: ' + error.message });
+    return c.json({ message: 'Gagal menambahkan uji organoleptik: ' + error.message }, 500);
   }
 });
 
 // Update Uji Organoleptik (Administrator only)
-router.put('/:id', authenticateToken, requireRoles('Administrator'), (req, res) => {
-  const { id } = req.params;
-  const { id_menu, tanggal, warna, aroma, rasa, tekstur, keterangan } = req.body;
+router.put('/:id', authenticateToken, requireRoles('Administrator'), async (c) => {
+  const db = c.get('db');
+  const id = c.req.param('id');
+  const { id_menu, tanggal, warna, aroma, rasa, tekstur, keterangan } = await c.req.json().catch(() => ({}));
 
   try {
-    const stmt = db.prepare(`
+    const result = await db.prepare(`
       UPDATE uji_organoleptik
       SET id_menu = ?, tanggal = ?, warna = ?, aroma = ?, rasa = ?, tekstur = ?, keterangan = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id_uji = ?
-    `);
-
-    const result = stmt.run(
+    `).run(
       Number(id_menu),
       tanggal,
       Number(warna),
@@ -116,34 +115,35 @@ router.put('/:id', authenticateToken, requireRoles('Administrator'), (req, res) 
     );
 
     if (result.changes === 0) {
-      return res.status(404).json({ message: 'Data uji organoleptik tidak ditemukan.' });
+      return c.json({ message: 'Data uji organoleptik tidak ditemukan.' }, 404);
     }
 
-    const updated = db.prepare(`
+    const updated = await db.prepare(`
       SELECT u.*, m.nama_menu, m.deskripsi as deskripsi_menu
       FROM uji_organoleptik u
       JOIN menu_harian m ON u.id_menu = m.id_menu
       WHERE u.id_uji = ?
     `).get(id);
 
-    res.json(updated);
+    return c.json(updated);
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal memperbarui uji organoleptik: ' + error.message });
+    return c.json({ message: 'Gagal memperbarui uji organoleptik: ' + error.message }, 500);
   }
 });
 
 // Delete Uji Organoleptik (Administrator only)
-router.delete('/:id', authenticateToken, requireRoles('Administrator'), (req, res) => {
-  const { id } = req.params;
+router.delete('/:id', authenticateToken, requireRoles('Administrator'), async (c) => {
+  const db = c.get('db');
+  const id = c.req.param('id');
 
   try {
-    const result = db.prepare('DELETE FROM uji_organoleptik WHERE id_uji = ?').run(id);
+    const result = await db.prepare('DELETE FROM uji_organoleptik WHERE id_uji = ?').run(id);
     if (result.changes === 0) {
-      return res.status(404).json({ message: 'Data uji organoleptik tidak ditemukan.' });
+      return c.json({ message: 'Data uji organoleptik tidak ditemukan.' }, 404);
     }
-    res.json({ message: 'Data uji organoleptik berhasil dihapus.' });
+    return c.json({ message: 'Data uji organoleptik berhasil dihapus.' });
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal menghapus data uji organoleptik: ' + error.message });
+    return c.json({ message: 'Gagal menghapus data uji organoleptik: ' + error.message }, 500);
   }
 });
 

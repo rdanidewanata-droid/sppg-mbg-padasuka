@@ -4,32 +4,27 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "server": "tsx server/index.ts",
+    "api": "wrangler dev --port 5001",
     "client": "vite",
-    "dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"cyan.bold,green.bold\" \"npm run server\" \"npm run client\"",
+    "dev": "concurrently -k -p \"[{name}]\" -n \"API,CLIENT\" -c \"cyan.bold,green.bold\" \"npm run api\" \"npm run client\"",
     "build": "tsc -b && vite build",
-    "start": "tsx server/index.ts",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "npm run build && wrangler deploy",
+    "db:seed:generate": "tsx scripts/generate-seed.ts",
+    "db:migrate:local": "wrangler d1 migrations apply sistem-mbg --local",
+    "db:migrate:remote": "wrangler d1 migrations apply sistem-mbg --remote"
   },
   "dependencies": {
-    "@types/better-sqlite3": "^9.6.0",
-    "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^13.0.3",
-    "cors": "^2.8.6",
-    "express": "^5.3.0",
-    "jsonwebtoken": "^9.0.3",
+    "hono": "^4.13.13",
     "lucide-react": "^1.59.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.4"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261024.1",
     "@tailwindcss/vite": "^4.3.3",
-    "@types/bcryptjs": "^2.4.6",
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.6",
-    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
@@ -39,6 +34,7 @@
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.15",
     "typescript": "~6.0.2",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "wrangler": "^4.152.0"
   }
 }

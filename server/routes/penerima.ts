@@ -1,15 +1,16 @@
-import { Router } from 'express';
-import { db } from '../db.js';
-import { authenticateToken, requireRoles } from '../auth.js';
+import { Hono } from 'hono';
+import { authenticateToken, requireRoles } from '../auth';
+import type { AppEnv } from '../types';
 
-const router = Router();
+const router = new Hono<AppEnv>();
 
 // List Penerima Manfaat
-router.get('/', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'), (req, res) => {
-  const { search, tipe, kategori, status } = req.query;
+router.get('/', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'), async (c) => {
+  const db = c.get('db');
+  const { search, tipe, kategori, status } = c.req.query();
 
   let query = `
-    SELECT 
+    SELECT
       p.*,
       s.nama_sekolah,
       pos.nama_posyandu
@@ -43,36 +44,35 @@ router.get('/', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'),
   query += ' ORDER BY p.id_penerima DESC';
 
   try {
-    const list = db.prepare(query).all(...params);
-    res.json(list);
+    const list = await db.prepare(query).all(...params);
+    return c.json(list);
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal mengambil data penerima manfaat: ' + error.message });
+    return c.json({ message: 'Gagal mengambil data penerima manfaat: ' + error.message }, 500);
   }
 });
 
 // Create Penerima Manfaat (Administrator only)
-router.post('/', authenticateToken, requireRoles('Administrator'), (req, res) => {
-  const { tipe, id_sekolah, id_posyandu, nama_penerima, kategori, kelas_atau_usia, jenis_kelamin, alergi_pantangan, status } = req.body;
+router.post('/', authenticateToken, requireRoles('Administrator'), async (c) => {
+  const db = c.get('db');
+  const { tipe, id_sekolah, id_posyandu, nama_penerima, kategori, kelas_atau_usia, jenis_kelamin, alergi_pantangan, status } = await c.req.json().catch(() => ({}));
 
   if (!tipe || !nama_penerima || !kategori || !jenis_kelamin) {
-    return res.status(400).json({ message: 'Tipe, nama penerima, kategori, dan jenis kelamin wajib diisi.' });
+    return c.json({ message: 'Tipe, nama penerima, kategori, dan jenis kelamin wajib diisi.' }, 400);
   }
 
   if (tipe === 'Sekolah' && !id_sekolah) {
-    return res.status(400).json({ message: 'Sekolah asal wajib dipilih untuk penerima tipe Sekolah.' });
+    return c.json({ message: 'Sekolah asal wajib dipilih untuk penerima tipe Sekolah.' }, 400);
   }
 
   if (tipe === 'Posyandu' && !id_posyandu) {
-    return res.status(400).json({ message: 'Posyandu asal wajib dipilih untuk penerima tipe Posyandu.' });
+    return c.json({ message: 'Posyandu asal wajib dipilih untuk penerima tipe Posyandu.' }, 400);
   }
 
   try {
-    const stmt = db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO penerima_manfaat (tipe, id_sekolah, id_posyandu, nama_penerima, kategori, kelas_atau_usia, jenis_kelamin, alergi_pantangan, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const result = stmt.run(
+    `).run(
       tipe,
       tipe === 'Sekolah' ? Number(id_sekolah) : null,
       tipe === 'Posyandu' ? Number(id_posyandu) : null,
@@ -84,7 +84,7 @@ router.post('/', authenticateToken, requireRoles('Administrator'), (req, res) =>
       status || 'Aktif'
     );
 
-    const created = db.prepare(`
+    const created = await db.prepare(`
       SELECT p.*, s.nama_sekolah, pos.nama_posyandu
       FROM penerima_manfaat p
       LEFT JOIN sekolah s ON p.id_sekolah = s.id_sekolah
@@ -92,25 +92,24 @@ router.post('/', authenticateToken, requireRoles('Administrator'), (req, res) =>
       WHERE p.id_penerima = ?
     `).get(result.lastInsertRowid);
 
-    res.status(201).json(created);
+    return c.json(created, 201);
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal menambahkan penerima manfaat: ' + error.message });
+    return c.json({ message: 'Gagal menambahkan penerima manfaat: ' + error.message }, 500);
   }
 });
 
 // Update Penerima Manfaat (Administrator only)
-router.put('/:id', authenticateToken, requireRoles('Administrator'), (req, res) => {
-  const { id } = req.params;
-  const { tipe, id_sekolah, id_posyandu, nama_penerima, kategori, kelas_atau_usia, jenis_kelamin, alergi_pantangan, status } = req.body;
+router.put('/:id', authenticateToken, requireRoles('Administrator'), async (c) => {
+  const db = c.get('db');
+  const id = c.req.param('id');
+  const { tipe, id_sekolah, id_posyandu, nama_penerima, kategori, kelas_atau_usia, jenis_kelamin, alergi_pantangan, status } = await c.req.json().catch(() => ({}));
 
   try {
-    const stmt = db.prepare(`
+    const result = await db.prepare(`
       UPDATE penerima_manfaat
       SET tipe = ?, id_sekolah = ?, id_posyandu = ?, nama_penerima = ?, kategori = ?, kelas_atau_usia = ?, jenis_kelamin = ?, alergi_pantangan = ?, status = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id_penerima = ?
-    `);
-
-    const result = stmt.run(
+    `).run(
       tipe,
       tipe === 'Sekolah' ? Number(id_sekolah) : null,
       tipe === 'Posyandu' ? Number(id_posyandu) : null,
@@ -124,10 +123,10 @@ router.put('/:id', authenticateToken, requireRoles('Administrator'), (req, res) 
     );
 
     if (result.changes === 0) {
-      return res.status(404).json({ message: 'Data penerima manfaat tidak ditemukan.' });
+      return c.json({ message: 'Data penerima manfaat tidak ditemukan.' }, 404);
     }
 
-    const updated = db.prepare(`
+    const updated = await db.prepare(`
       SELECT p.*, s.nama_sekolah, pos.nama_posyandu
       FROM penerima_manfaat p
       LEFT JOIN sekolah s ON p.id_sekolah = s.id_sekolah
@@ -135,24 +134,25 @@ router.put('/:id', authenticateToken, requireRoles('Administrator'), (req, res) 
       WHERE p.id_penerima = ?
     `).get(id);
 
-    res.json(updated);
+    return c.json(updated);
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal memperbarui penerima manfaat: ' + error.message });
+    return c.json({ message: 'Gagal memperbarui penerima manfaat: ' + error.message }, 500);
   }
 });
 
 // Delete Penerima Manfaat (Administrator only)
-router.delete('/:id', authenticateToken, requireRoles('Administrator'), (req, res) => {
-  const { id } = req.params;
+router.delete('/:id', authenticateToken, requireRoles('Administrator'), async (c) => {
+  const db = c.get('db');
+  const id = c.req.param('id');
 
   try {
-    const result = db.prepare('DELETE FROM penerima_manfaat WHERE id_penerima = ?').run(id);
+    const result = await db.prepare('DELETE FROM penerima_manfaat WHERE id_penerima = ?').run(id);
     if (result.changes === 0) {
-      return res.status(404).json({ message: 'Data penerima manfaat tidak ditemukan.' });
+      return c.json({ message: 'Data penerima manfaat tidak ditemukan.' }, 404);
     }
-    res.json({ message: 'Data penerima manfaat berhasil dihapus.' });
+    return c.json({ message: 'Data penerima manfaat berhasil dihapus.' });
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal menghapus penerima manfaat: ' + error.message });
+    return c.json({ message: 'Gagal menghapus penerima manfaat: ' + error.message }, 500);
   }
 });
 

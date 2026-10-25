@@ -1,0 +1,29 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "sistem-mbg",
+	"main": "server/index.ts",
+	"compatibility_date": "2026-10-01",
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
+		// Only /api/* hits the Worker; everything else is served straight from dist/.
+		"run_worker_first": [
+			"/api/*"
+		]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "sistem-mbg",
+			// Replace with the id printed by `pnpm wrangler d1 create sistem-mbg`.
+			"database_id": "eeabdee3-14fe-44a2-a392-72ed16c42699",
+			"migrations_dir": "migrations"
+		},
+		{
+			"binding": "sistem_mbg",
+			"database_name": "sistem-mbg",
+			"database_id": "eeabdee3-14fe-44a2-a392-72ed16c42699"
+		}
+	]
+}

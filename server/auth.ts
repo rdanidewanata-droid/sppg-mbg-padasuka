@@ -1,63 +1,55 @@
-import jwt from 'jsonwebtoken';
-import { Request, Response, NextFunction } from 'express';
+import { sign, verify } from 'hono/jwt';
+import type { MiddlewareHandler } from 'hono';
+import type { AppEnv, AuthUser } from './types';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'sppg-padasuka-2-cimahi-secret-key-2026';
+export type { AuthUser };
 
-export interface AuthUser {
-  id: number;
-  nama: string;
-  username: string;
-  role: 'Administrator' | 'Kepala SPPG' | 'Relawan';
-  id_relawan?: number | null;
-}
+const TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-export interface AuthenticatedRequest extends Request {
-  user?: AuthUser;
-}
-
-export function generateToken(user: AuthUser): string {
-  return jwt.sign(
+export function generateToken(user: AuthUser, secret: string): Promise<string> {
+  return sign(
     {
       id: user.id,
       nama: user.nama,
       username: user.username,
       role: user.role,
       id_relawan: user.id_relawan ?? null,
+      exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS,
     },
-    JWT_SECRET,
-    { expiresIn: '7d' }
+    secret,
+    'HS256'
   );
 }
 
-export function authenticateToken(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+export const authenticateToken: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const token = c.req.header('authorization')?.split(' ')[1];
 
   if (!token) {
-    return res.status(401).json({ message: 'Sesi kedaluwarsa atau token tidak ditemukan. Silakan masuk kembali.' });
+    return c.json({ message: 'Sesi kedaluwarsa atau token tidak ditemukan. Silakan masuk kembali.' }, 401);
   }
 
-  jwt.verify(token, JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(401).json({ message: 'Token tidak valid. Silakan masuk kembali.' });
-    }
-    req.user = decoded as AuthUser;
-    next();
-  });
-}
+  try {
+    const decoded = await verify(token, c.env.JWT_SECRET, 'HS256');
+    c.set('user', decoded as unknown as AuthUser);
+  } catch {
+    return c.json({ message: 'Token tidak valid. Silakan masuk kembali.' }, 401);
+  }
+  await next();
+};
 
-export function requireRoles(...roles: string[]) {
-  return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    if (!req.user) {
-      return res.status(401).json({ message: 'Silakan masuk ke sistem terlebih dahulu.' });
-    }
-
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({
-        message: `Akses Ditolak: Hak akses '${req.user.role}' tidak diizinkan untuk melakukan tindakan ini.`,
-      });
+export function requireRoles(...roles: string[]): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    const user = c.get('user');
+    if (!user) {
+      return c.json({ message: 'Silakan masuk ke sistem terlebih dahulu.' }, 401);
     }
 
-    next();
+    if (!roles.includes(user.role)) {
+      return c.json(
+        { message: `Akses Ditolak: Hak akses '${user.role}' tidak diizinkan untuk melakukan tindakan ini.` },
+        403
+      );
+    }
+    await next();
   };
 }

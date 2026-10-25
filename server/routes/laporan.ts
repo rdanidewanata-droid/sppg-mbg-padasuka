@@ -1,16 +1,17 @@
-import { Router } from 'express';
-import { db } from '../db.js';
-import { authenticateToken, requireRoles } from '../auth.js';
+import { Hono } from 'hono';
+import { authenticateToken, requireRoles } from '../auth';
+import type { AppEnv } from '../types';
 
-const router = Router();
+const router = new Hono<AppEnv>();
 
 // 1. Laporan Penerima Manfaat
-router.get('/penerima-manfaat', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'), (req, res) => {
-  const { tipe, kategori } = req.query;
+router.get('/penerima-manfaat', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'), async (c) => {
+  const db = c.get('db');
+  const { tipe, kategori } = c.req.query();
 
   try {
     let query = `
-      SELECT 
+      SELECT
         p.*,
         COALESCE(s.nama_sekolah, pos.nama_posyandu) as nama_instansi,
         s.jenjang,
@@ -33,42 +34,42 @@ router.get('/penerima-manfaat', authenticateToken, requireRoles('Administrator',
     }
 
     query += ' ORDER BY p.tipe ASC, p.nama_penerima ASC';
-    const detailList = db.prepare(query).all(...params);
+    const detailList = await db.prepare(query).all(...params);
 
     // Summary aggregates
-    const summarySekolah = db.prepare(`
-      SELECT 
+    const summarySekolah = await db.prepare(`
+      SELECT
         'Sekolah / PAUD' as kelompok,
         COUNT(id_sekolah) as jumlah_lembaga,
         COALESCE(SUM(jumlah_penerima), 0) as total_penerima
       FROM sekolah
       WHERE status = 'Aktif'
-    `).get() as any;
+    `).get();
 
-    const summaryPosyandu = db.prepare(`
-      SELECT 
+    const summaryPosyandu = await db.prepare(`
+      SELECT
         'Posyandu' as kelompok,
         COUNT(id_posyandu) as jumlah_lembaga,
         COALESCE(SUM(jumlah_penerima), 0) as total_penerima
       FROM posyandu
       WHERE status = 'Aktif'
-    `).get() as any;
+    `).get();
 
-    const breakdownSekolah = db.prepare(`
+    const breakdownSekolah = await db.prepare(`
       SELECT nama_sekolah as instansi, jenjang, alamat, jumlah_penerima
       FROM sekolah
       WHERE status = 'Aktif'
       ORDER BY jenjang ASC, nama_sekolah ASC
     `).all();
 
-    const breakdownPosyandu = db.prepare(`
+    const breakdownPosyandu = await db.prepare(`
       SELECT nama_posyandu as instansi, rw, ketua_posyandu, jumlah_penerima
       FROM posyandu
       WHERE status = 'Aktif'
       ORDER BY id_posyandu ASC
     `).all();
 
-    res.json({
+    return c.json({
       title: 'Laporan Penerima Manfaat Program Makan Bergizi Gratis (MBG)',
       generatedAt: new Date().toISOString(),
       summary: {
@@ -83,17 +84,18 @@ router.get('/penerima-manfaat', authenticateToken, requireRoles('Administrator',
       sampleDetails: detailList,
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal menghasilkan laporan penerima manfaat: ' + error.message });
+    return c.json({ message: 'Gagal menghasilkan laporan penerima manfaat: ' + error.message }, 500);
   }
 });
 
 // 2. Laporan Absensi Relawan
-router.get('/absensi-relawan', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'), (req, res) => {
-  const { tanggal_awal, tanggal_akhir, status } = req.query;
+router.get('/absensi-relawan', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'), async (c) => {
+  const db = c.get('db');
+  const { tanggal_awal, tanggal_akhir, status } = c.req.query();
 
   try {
     let query = `
-      SELECT 
+      SELECT
         a.*,
         r.nama_relawan,
         r.nik,
@@ -119,7 +121,7 @@ router.get('/absensi-relawan', authenticateToken, requireRoles('Administrator', 
     }
 
     query += ' ORDER BY a.tanggal DESC, a.waktu_masuk ASC';
-    const rows = db.prepare(query).all(...params);
+    const rows = await db.prepare(query).all(...params);
 
     // Summary counts
     let hadir = 0, izin = 0, sakit = 0, alpa = 0;
@@ -130,7 +132,7 @@ router.get('/absensi-relawan', authenticateToken, requireRoles('Administrator', 
       else if (r.status === 'Alpa') alpa++;
     });
 
-    res.json({
+    return c.json({
       title: 'Laporan Rekapitulasi Absensi Relawan MBG',
       periode: tanggal_awal && tanggal_akhir ? `${tanggal_awal} s/d ${tanggal_akhir}` : 'Semua Periode',
       summary: {
@@ -144,17 +146,18 @@ router.get('/absensi-relawan', authenticateToken, requireRoles('Administrator', 
       data: rows,
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal menghasilkan laporan absensi: ' + error.message });
+    return c.json({ message: 'Gagal menghasilkan laporan absensi: ' + error.message }, 500);
   }
 });
 
 // 3. Laporan Menu Harian
-router.get('/menu-harian', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'), (req, res) => {
-  const { tanggal_awal, tanggal_akhir } = req.query;
+router.get('/menu-harian', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'), async (c) => {
+  const db = c.get('db');
+  const { tanggal_awal, tanggal_akhir } = c.req.query();
 
   try {
     let query = `
-      SELECT 
+      SELECT
         m.*,
         COUNT(u.id_uji) as jumlah_uji,
         ROUND(AVG((u.warna + u.aroma + u.rasa + u.tekstur) / 4.0), 1) as avg_skor
@@ -174,26 +177,27 @@ router.get('/menu-harian', authenticateToken, requireRoles('Administrator', 'Kep
     }
 
     query += ' GROUP BY m.id_menu ORDER BY m.tanggal DESC';
-    const rows = db.prepare(query).all(...params);
+    const rows = await db.prepare(query).all(...params);
 
-    res.json({
+    return c.json({
       title: 'Laporan Siklus & Distribusi Menu Harian MBG',
       periode: tanggal_awal && tanggal_akhir ? `${tanggal_awal} s/d ${tanggal_akhir}` : 'Semua Periode',
       totalMenu: rows.length,
       data: rows,
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal menghasilkan laporan menu harian: ' + error.message });
+    return c.json({ message: 'Gagal menghasilkan laporan menu harian: ' + error.message }, 500);
   }
 });
 
 // 4. Laporan Uji Organoleptik
-router.get('/uji-organoleptik', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'), (req, res) => {
-  const { tanggal_awal, tanggal_akhir } = req.query;
+router.get('/uji-organoleptik', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'), async (c) => {
+  const db = c.get('db');
+  const { tanggal_awal, tanggal_akhir } = c.req.query();
 
   try {
     let query = `
-      SELECT 
+      SELECT
         u.*,
         m.nama_menu,
         m.deskripsi as rincian_menu,
@@ -214,7 +218,7 @@ router.get('/uji-organoleptik', authenticateToken, requireRoles('Administrator',
     }
 
     query += ' ORDER BY u.tanggal DESC, u.id_uji DESC';
-    const rows = db.prepare(query).all(...params);
+    const rows = await db.prepare(query).all(...params);
 
     // Compute grand averages
     let totalScore = 0;
@@ -223,7 +227,7 @@ router.get('/uji-organoleptik', authenticateToken, requireRoles('Administrator',
     });
     const grandAvg = rows.length > 0 ? (totalScore / rows.length).toFixed(2) : '0';
 
-    res.json({
+    return c.json({
       title: 'Laporan Penilaian Kualitas Makanan (Uji Organoleptik) MBG',
       periode: tanggal_awal && tanggal_akhir ? `${tanggal_awal} s/d ${tanggal_akhir}` : 'Semua Periode',
       summary: {
@@ -234,7 +238,7 @@ router.get('/uji-organoleptik', authenticateToken, requireRoles('Administrator',
       data: rows,
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal menghasilkan laporan uji organoleptik: ' + error.message });
+    return c.json({ message: 'Gagal menghasilkan laporan uji organoleptik: ' + error.message }, 500);
   }
 });
 

@@ -1,12 +1,13 @@
-import { Router } from 'express';
-import { db } from '../db.js';
-import { authenticateToken, requireRoles } from '../auth.js';
+import { Hono } from 'hono';
+import { authenticateToken, requireRoles } from '../auth';
+import type { AppEnv } from '../types';
 
-const router = Router();
+const router = new Hono<AppEnv>();
 
 // List Sekolah (Administrator & Kepala SPPG)
-router.get('/', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'), (req, res) => {
-  const { search, jenjang, status } = req.query;
+router.get('/', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'), async (c) => {
+  const db = c.get('db');
+  const { search, jenjang, status } = c.req.query();
   let query = 'SELECT * FROM sekolah WHERE 1=1';
   const params: any[] = [];
 
@@ -28,28 +29,27 @@ router.get('/', authenticateToken, requireRoles('Administrator', 'Kepala SPPG'),
   query += ' ORDER BY id_sekolah ASC';
 
   try {
-    const list = db.prepare(query).all(...params);
-    res.json(list);
+    const list = await db.prepare(query).all(...params);
+    return c.json(list);
   } catch (error) {
-    res.status(500).json({ message: 'Gagal mengambil data sekolah.' });
+    return c.json({ message: 'Gagal mengambil data sekolah.' }, 500);
   }
 });
 
 // Create Sekolah (Administrator only)
-router.post('/', authenticateToken, requireRoles('Administrator'), (req, res) => {
-  const { nama_sekolah, npsn, jenjang, alamat, nama_kontak, no_telepon, jumlah_penerima, status } = req.body;
+router.post('/', authenticateToken, requireRoles('Administrator'), async (c) => {
+  const db = c.get('db');
+  const { nama_sekolah, npsn, jenjang, alamat, nama_kontak, no_telepon, jumlah_penerima, status } = await c.req.json().catch(() => ({}));
 
   if (!nama_sekolah || !jenjang || !alamat) {
-    return res.status(400).json({ message: 'Nama sekolah, jenjang, dan alamat wajib diisi.' });
+    return c.json({ message: 'Nama sekolah, jenjang, dan alamat wajib diisi.' }, 400);
   }
 
   try {
-    const stmt = db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO sekolah (nama_sekolah, npsn, jenjang, alamat, nama_kontak, no_telepon, jumlah_penerima, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const result = stmt.run(
+    `).run(
       nama_sekolah,
       npsn || '',
       jenjang,
@@ -60,26 +60,25 @@ router.post('/', authenticateToken, requireRoles('Administrator'), (req, res) =>
       status || 'Aktif'
     );
 
-    const created = db.prepare('SELECT * FROM sekolah WHERE id_sekolah = ?').get(result.lastInsertRowid);
-    res.status(201).json(created);
+    const created = await db.prepare('SELECT * FROM sekolah WHERE id_sekolah = ?').get(result.lastInsertRowid);
+    return c.json(created, 201);
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal menambahkan sekolah: ' + error.message });
+    return c.json({ message: 'Gagal menambahkan sekolah: ' + error.message }, 500);
   }
 });
 
 // Update Sekolah (Administrator only)
-router.put('/:id', authenticateToken, requireRoles('Administrator'), (req, res) => {
-  const { id } = req.params;
-  const { nama_sekolah, npsn, jenjang, alamat, nama_kontak, no_telepon, jumlah_penerima, status } = req.body;
+router.put('/:id', authenticateToken, requireRoles('Administrator'), async (c) => {
+  const db = c.get('db');
+  const id = c.req.param('id');
+  const { nama_sekolah, npsn, jenjang, alamat, nama_kontak, no_telepon, jumlah_penerima, status } = await c.req.json().catch(() => ({}));
 
   try {
-    const stmt = db.prepare(`
+    const result = await db.prepare(`
       UPDATE sekolah
       SET nama_sekolah = ?, npsn = ?, jenjang = ?, alamat = ?, nama_kontak = ?, no_telepon = ?, jumlah_penerima = ?, status = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id_sekolah = ?
-    `);
-
-    const result = stmt.run(
+    `).run(
       nama_sekolah,
       npsn || '',
       jenjang,
@@ -92,37 +91,38 @@ router.put('/:id', authenticateToken, requireRoles('Administrator'), (req, res) 
     );
 
     if (result.changes === 0) {
-      return res.status(404).json({ message: 'Data sekolah tidak ditemukan.' });
+      return c.json({ message: 'Data sekolah tidak ditemukan.' }, 404);
     }
 
-    const updated = db.prepare('SELECT * FROM sekolah WHERE id_sekolah = ?').get(id);
-    res.json(updated);
+    const updated = await db.prepare('SELECT * FROM sekolah WHERE id_sekolah = ?').get(id);
+    return c.json(updated);
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal memperbarui sekolah: ' + error.message });
+    return c.json({ message: 'Gagal memperbarui sekolah: ' + error.message }, 500);
   }
 });
 
 // Delete Sekolah (Administrator only) - with relation guard
-router.delete('/:id', authenticateToken, requireRoles('Administrator'), (req, res) => {
-  const { id } = req.params;
+router.delete('/:id', authenticateToken, requireRoles('Administrator'), async (c) => {
+  const db = c.get('db');
+  const id = c.req.param('id');
 
   try {
     // Check relation
-    const relatedCount = db.prepare('SELECT COUNT(*) as count FROM penerima_manfaat WHERE id_sekolah = ?').get(id) as { count: number };
+    const relatedCount = await db.prepare('SELECT COUNT(*) as count FROM penerima_manfaat WHERE id_sekolah = ?').get(id);
     if (relatedCount && relatedCount.count > 0) {
-      return res.status(400).json({
+      return c.json({
         message: `Sekolah tidak dapat dihapus karena masih memiliki ${relatedCount.count} data Penerima Manfaat yang terhubung.`,
-      });
+      }, 400);
     }
 
-    const result = db.prepare('DELETE FROM sekolah WHERE id_sekolah = ?').run(id);
+    const result = await db.prepare('DELETE FROM sekolah WHERE id_sekolah = ?').run(id);
     if (result.changes === 0) {
-      return res.status(404).json({ message: 'Data sekolah tidak ditemukan.' });
+      return c.json({ message: 'Data sekolah tidak ditemukan.' }, 404);
     }
 
-    res.json({ message: 'Data sekolah berhasil dihapus.' });
+    return c.json({ message: 'Data sekolah berhasil dihapus.' });
   } catch (error: any) {
-    res.status(500).json({ message: 'Gagal menghapus sekolah: ' + error.message });
+    return c.json({ message: 'Gagal menghapus sekolah: ' + error.message }, 500);
   }
 });
 

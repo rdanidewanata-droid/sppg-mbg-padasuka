@@ -1,37 +1,38 @@
-import { Router } from 'express';
-import bcrypt from 'bcryptjs';
-import { db } from '../db.js';
-import { generateToken, authenticateToken, AuthenticatedRequest } from '../auth.js';
+import { Hono } from 'hono';
+import { verifyPassword } from '../password';
+import { generateToken, authenticateToken } from '../auth';
+import type { AppEnv } from '../types';
 
-const router = Router();
+const router = new Hono<AppEnv>();
 
 // Login
-router.post('/login', (req, res) => {
-  const { username, password } = req.body;
+router.post('/login', async (c) => {
+  const db = c.get('db');
+  const { username, password } = await c.req.json().catch(() => ({}));
 
   if (!username || !password) {
-    return res.status(400).json({ message: 'Nama pengguna atau password tidak sesuai.' });
+    return c.json({ message: 'Nama pengguna atau password tidak sesuai.' }, 400);
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE username = ? OR id = ?').get(username, username) as any;
+  const user = await db.prepare('SELECT * FROM users WHERE username = ? OR id = ?').get(username, username);
 
   if (!user) {
-    return res.status(401).json({ message: 'Nama pengguna atau password tidak sesuai.' });
+    return c.json({ message: 'Nama pengguna atau password tidak sesuai.' }, 401);
   }
 
-  const isPasswordMatch = bcrypt.compareSync(password, user.password);
+  const isPasswordMatch = await verifyPassword(password, user.password);
   if (!isPasswordMatch) {
-    return res.status(401).json({ message: 'Nama pengguna atau password tidak sesuai.' });
+    return c.json({ message: 'Nama pengguna atau password tidak sesuai.' }, 401);
   }
 
   if (user.status !== 'Aktif') {
-    return res.status(403).json({ message: 'Akun Anda berstatus nonaktif. Silakan hubungi Administrator.' });
+    return c.json({ message: 'Akun Anda berstatus nonaktif. Silakan hubungi Administrator.' }, 403);
   }
 
   // Check if linked to a relawan record
-  let relawanRecord = null;
+  let relawanRecord: { id_relawan: number } | undefined;
   if (user.role === 'Relawan') {
-    relawanRecord = db.prepare('SELECT id_relawan FROM relawan WHERE id_user = ?').get(user.id) as any;
+    relawanRecord = await db.prepare('SELECT id_relawan FROM relawan WHERE id_user = ?').get(user.id);
   }
 
   const tokenUser = {
@@ -42,9 +43,9 @@ router.post('/login', (req, res) => {
     id_relawan: relawanRecord ? relawanRecord.id_relawan : null,
   };
 
-  const token = generateToken(tokenUser);
+  const token = await generateToken(tokenUser, c.env.JWT_SECRET);
 
-  return res.json({
+  return c.json({
     message: 'Berhasil masuk ke sistem.',
     token,
     user: {
@@ -61,33 +62,27 @@ router.post('/login', (req, res) => {
 });
 
 // Current User Info
-router.get('/me', authenticateToken, (req: AuthenticatedRequest, res) => {
-  if (!req.user) {
-    return res.status(401).json({ message: 'Sesi tidak valid.' });
-  }
+router.get('/me', authenticateToken, async (c) => {
+  const db = c.get('db');
+  const authUser = c.get('user');
 
-  const user = db.prepare('SELECT id, nama, username, role, no_telepon, alamat, status, created_at FROM users WHERE id = ?').get(req.user.id) as any;
+  const user = await db.prepare('SELECT id, nama, username, role, no_telepon, alamat, status, created_at FROM users WHERE id = ?').get(authUser.id);
   if (!user) {
-    return res.status(404).json({ message: 'Pengguna tidak ditemukan.' });
+    return c.json({ message: 'Pengguna tidak ditemukan.' }, 404);
   }
 
-  let id_relawan = null;
+  let id_relawan: number | null = null;
   if (user.role === 'Relawan') {
-    const relawanRecord = db.prepare('SELECT id_relawan FROM relawan WHERE id_user = ?').get(user.id) as any;
+    const relawanRecord = await db.prepare('SELECT id_relawan FROM relawan WHERE id_user = ?').get(user.id);
     if (relawanRecord) {
       id_relawan = relawanRecord.id_relawan;
     }
   }
 
-  return res.json({
-    ...user,
-    id_relawan,
-  });
+  return c.json({ ...user, id_relawan });
 });
 
 // Logout
-router.post('/logout', (req, res) => {
-  return res.json({ message: 'Berhasil keluar dari sistem.' });
-});
+router.post('/logout', (c) => c.json({ message: 'Berhasil keluar dari sistem.' }));
 
 export default router;

@@ -1,30 +1,24 @@
-import bcrypt from 'bcryptjs';
-import { db, initDatabase } from './db.js';
+import { hashPassword } from './password';
 
-export function seedData() {
-  initDatabase();
+// Minimal surface of a database needed to seed it. The generator script
+// (scripts/generate-seed.ts) implements it by writing SQL statements instead of
+// executing them, so the seed data lives in one place and ships as a D1 migration.
+export interface SeedDb {
+  prepare(sql: string): { run(...params: (string | number | null)[]): { lastInsertRowid: number } };
+}
 
-  // Check if users already exist
-  const existingUsers = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
-  if (existingUsers && existingUsers.count > 0) {
-    console.log('Database already has data. Skipping seed.');
-    return;
-  }
-
-  console.log('Seeding initial data for SPPG Padasuka 2 Cimahi Tengah...');
-
-  // 1. SEED USERS
+export async function seedData(db: SeedDb) {
   // Notice: password "admin 123", "kepala 123", "relawan 123"
-  const adminPasswordHash = bcrypt.hashSync('admin 123', 10);
-  const kepalaPasswordHash = bcrypt.hashSync('kepala 123', 10);
-  const relawanPasswordHash = bcrypt.hashSync('relawan 123', 10);
+  const adminPasswordHash = await hashPassword('admin 123');
+  const kepalaPasswordHash = await hashPassword('kepala 123');
+  const relawanPasswordHash = await hashPassword('relawan 123');
 
   const insertUser = db.prepare(`
     INSERT INTO users (nama, username, password, role, no_telepon, alamat, status)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
-  const adminResult = insertUser.run(
+  insertUser.run(
     'Drs. H. Hendra Setiawan, M.Si',
     'admin',
     adminPasswordHash,
@@ -206,13 +200,13 @@ export function seedData() {
     'Nasi Beras Merah, Semur Daging Sapi Empuk, Sup Bayam Jagung Manis, Tempe Orek Wijen, Pisang Barangan'
   );
 
-  const m4 = insertMenu.run(
+  insertMenu.run(
     '2026-04-09',
     'Paket Ayam Bakar Madu Bergizi',
     'Nasi Kuning Kunyit Asli, Ayam Bakar Bumbu Madu, Sayur Asem Segar, Tahu Tempe Bacem, Buah Melon Segar'
   );
 
-  const m5 = insertMenu.run(
+  insertMenu.run(
     '2026-04-10',
     'Paket Rolade Daging & Sayur Pelangi',
     'Nasi Tim Bergizi, Rolade Daging Sapi Saus Tiram, Brokoli Wortel Kukus, Perkedel Kentang, Buah Semangka'
@@ -298,5 +292,4 @@ export function seedData() {
   insertPenerima.run('Posyandu', null, 4, 'Arkhan Raffa', 'Balita', '3 Tahun 1 Bulan', 'L', 'Tidak Ada', 'Aktif');
   insertPenerima.run('Posyandu', null, 4, 'Ny. Siska Melati (Hamil 8 Bln)', 'Ibu Hamil', 'Trimester 3 (31 Thn)', 'P', 'Tidak Ada', 'Aktif');
 
-  console.log('Seeding completed successfully!');
 }
